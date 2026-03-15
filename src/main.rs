@@ -1,16 +1,32 @@
-use cryptoki::context::{CInitializeArgs, CInitializeFlags};
+#![feature(ascii_char)]
+
+use std::fs::File;
+
+use clap::{Command, arg};
+
+fn cli() -> Command {
+    clap::Command::new("yksignify")
+        .subcommand_required(true)
+        .subcommand(
+            Command::new("dump")
+                .about("Try to read a gzip-style signature")
+                .arg(arg!(<FILE> "The file to inspect"))
+        )
+}
 
 fn main() {
-    let ctx = cryptoki::context::Pkcs11::new("/usr/local/lib/libykcs11.dylib").expect("Cannot load PKCS impl");
-    ctx.initialize(CInitializeArgs::new(CInitializeFlags::OS_LOCKING_OK)).expect("Cannot initialize PKCS");
-
-    let slots = ctx.get_slots_with_token().expect("Can't get slots");
-    if slots.len() == 0 {
-        panic!("No slots found");
+    let cmd = cli().get_matches();
+    match cmd.subcommand() {
+        Some(("dump", matches)) => {
+            dump(matches.get_one::<String>("FILE").unwrap())
+        },
+        _ => unreachable!()
     }
+}
 
-    let slot = slots[0];
-    println!("{:?}", slot);
-    let info = ctx.get_slot_info(slot).expect("Can't get slot info");
-    println!("{:?}", info);
+fn dump(file: &String) {
+    let header = gzip_header::read_gz_header(&mut File::open(file).expect("Can't open file")).expect("Can't read gzip header");
+    if let Some(comment) = header.comment() && comment.is_ascii() && let Some(arr) = comment.as_ascii() {
+        println!("{}", arr.as_str());
+    }
 }
