@@ -11,11 +11,13 @@
             "request": "launch",
             "cargo": {
                 "args": [
+                    "+nightly",
                     "run",
                     "--bin=yksignify"
-                ]
+                ],
             },
-            "args": []
+            //"args": ["dump", "/Users/katie/Downloads/continuwuity-0.5.6.tgz"]
+            "args": ["token"]
         }
     ]
 }
