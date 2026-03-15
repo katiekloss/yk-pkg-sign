@@ -6,4 +6,4 @@ steps:
   - name: build
     image: rust:1-alpine
     commands:
-      - cargo build
+      - cargo +nightly build
