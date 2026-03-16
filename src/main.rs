@@ -96,14 +96,7 @@ fn sign(file: &String) {
         print!("Read block {} ({} bytes): ", n, i);
         n += 1;
 
-        let block_hash;
-        if i < buf.len() {
-            // this doesn't work as written but tldr we need to trim off the 8 trailing bytes for the CRC and length
-            block_hash = sha2::Sha512_256::digest(&buf[0..i-8]);
-        } else {
-            block_hash = sha2::Sha512_256::digest(buf);
-        }
-
+        let block_hash = sha2::Sha512_256::digest(&buf[0..i]);
         println!("{}", hex::encode(block_hash));
 
         if i < buf.len() {
