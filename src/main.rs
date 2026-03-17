@@ -2,6 +2,7 @@
 
 use std::{fs::File, io::{BufReader, Read, Seek}};
 
+use base64::{Engine, prelude::BASE64_STANDARD};
 use clap::{Command, arg};
 use cryptoki::{context::{CInitializeArgs, CInitializeFlags}, object::{Attribute, AttributeType, ObjectClass}};
 use sha2::Digest;
@@ -43,9 +44,21 @@ fn main() {
 
 fn dump(file: &String) {
     let header = gzip_header::read_gz_header(&mut File::open(file).expect("Can't open file")).expect("Can't read gzip header");
-    if let Some(comment) = header.comment() && comment.is_ascii() && let Some(arr) = comment.as_ascii() {
-        println!("{}", arr.as_str());
+    let comment;
+    if let Some(c) = header.comment() && c.is_ascii() && let Some(arr) = c.as_ascii() {
+        comment = arr.as_str();
+    } else {
+        panic!("gzip comment missing or out of range");
     }
+
+    println!("{}", comment);
+
+    let mut parts = comment.split("\n");
+    let signature = BASE64_STANDARD.decode(parts.nth(1).unwrap()).expect("Signature isn't valid base64");
+    let keytype = signature[0..2].as_ascii().unwrap().as_str(); // always Ed for EdDSA
+    let keynum = &signature[2..10]; // I guess this is like the key fingerprint
+    let real_signature = &signature[10..];
+    println!("{} key {}, signature: {}", keytype, hex::encode(keynum), hex::encode(real_signature));
 }
 
 fn show_token() {
