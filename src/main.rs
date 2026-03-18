@@ -5,7 +5,7 @@ use std::{fs::File, io::{BufReader, Read, Seek}};
 use base64::{Engine, prelude::BASE64_STANDARD};
 use clap::{Command, arg};
 use cryptoki::{context::{CInitializeArgs, CInitializeFlags}, object::{Attribute, AttributeType, ObjectClass}};
-use sha2::Digest;
+use sha2::{Digest, Sha512};
 
 fn cli() -> Command {
     clap::Command::new("yksignify")
@@ -102,12 +102,16 @@ fn sign(file: &String) {
     f.seek(std::io::SeekFrom::Start(header_size.try_into().unwrap())).expect("Can't seek to end of gzip header");
     let mut reader = BufReader::new(f);
 
+    // maintain a hash of the entire file for the actual signature
+    let mut file_hasher = Sha512::new();
     let mut n = 0;
     loop {
         let mut buf = [0; 65536];
         let i = reader.read(&mut buf).expect("Read failed");
         print!("Read block {} ({} bytes): ", n, i);
         n += 1;
+
+        file_hasher.update(&buf[0..i]);
 
         let block_hash = sha2::Sha512_256::digest(&buf[0..i]);
         println!("{}", hex::encode(block_hash));
@@ -116,4 +120,7 @@ fn sign(file: &String) {
             break;
         }
     }
+
+    let file_hash = file_hasher.finalize();
+    println!("Data SHA512 hash: {}", hex::encode(file_hash));
 }
