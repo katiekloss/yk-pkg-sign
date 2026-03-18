@@ -1,10 +1,12 @@
 #![feature(ascii_char)]
 
-use std::{fs::File, io::{BufReader, Read, Seek}};
+use std::{fs::{File, OpenOptions}, io::{BufReader, Read, Seek, Write}};
 
 use base64::{Engine, prelude::BASE64_STANDARD};
 use clap::{Command, arg};
 use cryptoki::{context::{CInitializeArgs, CInitializeFlags}, object::{Attribute, AttributeType, ObjectClass}};
+use ed25519_dalek::{SigningKey, ed25519::signature::SignerMut};
+use gzip_header::{ExtraFlags, FileSystemType, GzBuilder};
 use sha2::{Digest, Sha512};
 
 fn cli() -> Command {
@@ -19,6 +21,7 @@ fn cli() -> Command {
             Command::new("sign")
                 .about("Sign a gzip archive")
                 .arg(arg!(<FILE> "The file to sign"))
+                .arg(arg!(<KEYNAME> "The freeform key name to sign with"))
         )
         .subcommand(
             Command::new("token")
@@ -36,7 +39,8 @@ fn main() {
             show_token()
         },
         Some(("sign", matches)) => {
-            sign(matches.get_one::<String>("FILE").unwrap())
+            sign(matches.get_one::<String>("FILE").unwrap(),
+            matches.get_one::<String>("KEYNAME").unwrap())
         }
         _ => unreachable!()
     }
@@ -90,7 +94,7 @@ fn show_token() {
     }
 }
 
-fn sign(file: &String) {
+fn sign(file: &String, keyname: &String) {
     let mut f = File::open(file).expect("Can't open archive");
     let header = gzip_header::read_gz_header(&mut f).unwrap();
 
@@ -104,23 +108,79 @@ fn sign(file: &String) {
 
     // maintain a hash of the entire file for the actual signature
     let mut file_hasher = Sha512::new();
-    let mut n = 0;
+    let mut block_hashes = vec![];
     loop {
         let mut buf = [0; 65536];
         let i = reader.read(&mut buf).expect("Read failed");
-        print!("Read block {} ({} bytes): ", n, i);
-        n += 1;
-
         file_hasher.update(&buf[0..i]);
 
-        let block_hash = sha2::Sha512_256::digest(&buf[0..i]);
-        println!("{}", hex::encode(block_hash));
+        let block_hash = sha2::Sha512_256::digest(&buf[0..i]).to_vec();
+        block_hashes.push(block_hash);
 
         if i < buf.len() {
             break;
         }
     }
 
-    let file_hash = file_hasher.finalize();
-    println!("Data SHA512 hash: {}", hex::encode(file_hash));
+    let mut key = SigningKey::from_bytes(&[0; 32]);
+    let signature = key.sign(&file_hasher.finalize());
+
+    let mut full_signature: Vec<u8> = "Ed".as_bytes().to_vec();
+    // stolen from the test key I'm using for now
+    full_signature.append(&mut hex::decode("37a06a7b58d31213").unwrap());
+    full_signature.append(&mut signature.to_vec());
+
+    let comment = format!(
+"untrusted comment: verify with {}
+{}
+date={}
+key={}
+algorithm=SHA512/256
+blocksize=65536
+
+{}",
+        keyname,
+        BASE64_STANDARD.encode(full_signature),
+        chrono::Utc::now().to_rfc3339(),
+        keyname.replace(".pub", ".sec"),
+        block_hashes.into_iter().map(|h| hex::encode(h)).collect::<Vec<String>>().join("\n"));
+
+    // recreate the header from the old one, with the new comment
+    let mut new_header = GzBuilder::new()
+        .os(FileSystemType::from_u8(header.os()))
+        .xfl(ExtraFlags::from_u8(header.xfl()))
+        .mtime(header.mtime())
+        .comment(comment);
+
+    if let Some(extra) = header.extra() {
+        new_header = new_header.extra(extra);
+    }
+
+    if let Some(filename) = header.filename() {
+        new_header = new_header.filename(filename);
+    }
+
+    let header_bytes = new_header.into_header();
+
+    let mut signed_file = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(file.to_owned() + ".s")
+        .expect("Can't open new archive for write");
+
+    signed_file.write(&header_bytes).expect("Can't write new header");
+
+    // first byte of compressed data
+    reader.seek(std::io::SeekFrom::Start(header_size.try_into().unwrap())).unwrap();
+    loop {
+        let mut buf = [0; 65536];
+        let i = reader.read(&mut buf).expect("Read failed");
+
+        signed_file.write(&buf[0..i]).expect("Write failed");
+
+        if i < buf.len() {
+            break;
+        }
+    }
 }
