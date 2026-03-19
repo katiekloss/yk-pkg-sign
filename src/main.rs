@@ -4,25 +4,30 @@ use std::{fs::{File, OpenOptions}, io::{BufReader, Read, Seek, Write}};
 
 use base64::{Engine, prelude::BASE64_STANDARD};
 use clap::{Command, arg};
-use cryptoki::{context::{CInitializeArgs, CInitializeFlags}, object::{Attribute, ObjectClass}, session::UserType, types::AuthPin};
+use cryptoki::{context::{CInitializeArgs, CInitializeFlags}, object::{Attribute}, session::UserType, types::AuthPin};
 use ed25519_dalek::SigningKey;
 use gzip_header::{ExtraFlags, FileSystemType, GzBuilder};
 use sha2::{Digest, Sha512};
-use yk_pkg_sign::ALL_ATTRS;
+use yk_pkg_sign::{ALL_ATTRS, SigningRequest};
 
 fn cli() -> Command {
-    clap::Command::new("yksignify")
+    clap::Command::new("yk-pkg-sign")
         .subcommand_required(true)
         .subcommand(
             Command::new("dump")
                 .about("Try to read a gzip-style signature")
-                .arg(arg!(<FILE> "The file to inspect"))
+                .arg(arg!(<FILE> "The file to inspect")
+                    .required(true))
         )
         .subcommand(
             Command::new("sign")
                 .about("Sign a gzip archive")
-                .arg(arg!(<FILE> "The file to sign"))
-                .arg(arg!(<KEYNAME> "The freeform key name to sign with"))
+                .arg(arg!(-f --file <FILE> "The file to sign")
+                    .required(true))
+                .arg(arg!(-k --keyname <KEYNAME> "The freeform key name to sign with")
+                    .required(true))
+                .arg(arg!(-s --slot <SLOT> "The key slot to sign with")
+                    .required(true))
         )
         .subcommand(
             Command::new("token")
@@ -44,8 +49,7 @@ fn main() {
             show_token()
         },
         Some(("sign", matches)) => {
-            sign_package(matches.get_one::<String>("FILE").unwrap(),
-            matches.get_one::<String>("KEYNAME").unwrap())
+            sign_package(matches.into())
         },
         Some(("test-sign", _)) => {
             sign("01234567".as_bytes());
@@ -125,8 +129,8 @@ fn sign(data: &[u8]) -> Vec<u8> {
     vec![]
 }
 
-fn sign_package(file: &String, keyname: &String) {
-    let mut f = File::open(file).expect("Can't open archive");
+fn sign_package(req: SigningRequest /* and more! */) {
+    let mut f = File::open(&req.package_file).expect("Can't open archive");
     let header = gzip_header::read_gz_header(&mut f).unwrap();
 
     let header_size = 10 // fixed length preamble
@@ -169,10 +173,10 @@ algorithm=SHA512/256
 blocksize=65536
 
 {}",
-        keyname,
+        req.key_name,
         BASE64_STANDARD.encode(full_signature),
         chrono::Utc::now().to_rfc3339(),
-        keyname.replace(".pub", ".sec"),
+        req.key_name.replace(".pub", ".sec"),
         block_hashes.into_iter().map(|h| hex::encode(h)).collect::<Vec<String>>().join("\n"));
 
     // recreate the header from the old one, with the new comment
@@ -196,7 +200,7 @@ blocksize=65536
         .create(true)
         .write(true)
         .truncate(true)
-        .open(file.to_owned() + ".s")
+        .open(req.package_file + ".s")
         .expect("Can't open new archive for write");
 
     signed_file.write(&header_bytes).expect("Can't write new header");

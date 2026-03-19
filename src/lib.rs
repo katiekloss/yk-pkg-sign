@@ -1,3 +1,4 @@
+use clap::{ArgMatches};
 use cryptoki::object::AttributeType;
 
 pub const ALL_ATTRS: [AttributeType; 77] = [
@@ -79,3 +80,19 @@ pub const ALL_ATTRS: [AttributeType; 77] = [
     AttributeType::Wrap,
     AttributeType::WrapWithTrusted,
 ];
+
+pub struct SigningRequest {
+    pub package_file: String,
+    pub key_name: String,
+    pub slot: String,
+}
+
+impl From<&ArgMatches> for SigningRequest {
+    fn from(args: &ArgMatches) -> Self {
+        Self {
+            package_file: args.get_one::<String>("file").unwrap().to_owned(),
+            key_name: args.get_one::<String>("keyname").unwrap().to_owned(),
+            slot: args.get_one::<String>("slot").unwrap().to_owned()
+        }
+    }
+}
