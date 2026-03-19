@@ -4,10 +4,11 @@ use std::{fs::{File, OpenOptions}, io::{BufReader, Read, Seek, Write}};
 
 use base64::{Engine, prelude::BASE64_STANDARD};
 use clap::{Command, arg};
-use cryptoki::{context::{CInitializeArgs, CInitializeFlags}, object::{Attribute, AttributeType, ObjectClass}};
-use ed25519_dalek::{SigningKey, ed25519::signature::SignerMut};
+use cryptoki::{context::{CInitializeArgs, CInitializeFlags}, object::{Attribute}, session::UserType, types::AuthPin};
+use ed25519_dalek::SigningKey;
 use gzip_header::{ExtraFlags, FileSystemType, GzBuilder};
 use sha2::{Digest, Sha512};
+use yksignify::ALL_ATTRS;
 
 fn cli() -> Command {
     clap::Command::new("yksignify")
@@ -27,6 +28,10 @@ fn cli() -> Command {
             Command::new("token")
                 .about("Show information about the connected hardware token")
         )
+        .subcommand(
+            Command::new("test-sign")
+                .about("Sign test data using the connected YubiKey")
+        )
 }
 
 fn main() {
@@ -39,8 +44,11 @@ fn main() {
             show_token()
         },
         Some(("sign", matches)) => {
-            sign(matches.get_one::<String>("FILE").unwrap(),
+            sign_package(matches.get_one::<String>("FILE").unwrap(),
             matches.get_one::<String>("KEYNAME").unwrap())
+        },
+        Some(("test-sign", _)) => {
+            sign("01234567".as_bytes());
         }
         _ => unreachable!()
     }
@@ -80,21 +88,33 @@ fn show_token() {
     println!("{:?}", info);
     
     let session = ctx.open_ro_session(slot).expect("Can't start session");
-    let objs = session.find_objects(&[Attribute::Class(ObjectClass::PUBLIC_KEY)]).expect("");
-    for obj in objs {
-        print!("{:?}", obj);
-        let result = session.get_attributes(obj, &[AttributeType::KeyType]).expect("Can't get attrs");
+    session.login(UserType::User, Some(&AuthPin::new("".into()))).expect("Login failed");
 
-        if result.len() == 0 {
-            println!();
-            continue;
+    println!("Available signing keys:");
+
+    for key in session.find_objects(&[Attribute::Sign(true)]).expect("Failed to get keys") {
+        println!("{:#?}", key);
+        for attr in session.get_attributes(key, &ALL_ATTRS).expect("Failed to get key attributes") {
+            println!("\t{:?}", attr);
         }
-
-        println!("{:?}", result);
     }
 }
 
-fn sign(file: &String, keyname: &String) {
+fn sign(data: &[u8]) -> Vec<u8> {
+    let mut key = SigningKey::from_bytes(&[0; 32]);
+
+    let ctx = cryptoki::context::Pkcs11::new("/usr/local/lib/libykcs11.dylib").expect("Cannot load PKCS impl");
+    ctx.initialize(CInitializeArgs::new(CInitializeFlags::OS_LOCKING_OK)).expect("Cannot initialize PKCS");
+    let slots = ctx.get_slots_with_token().expect("Can't get slots");
+    if slots.len() == 0 {
+        panic!("No slots found");
+    }
+    let session = ctx.open_ro_session(slots[0]).expect("Can't create session");
+
+    vec![]
+}
+
+fn sign_package(file: &String, keyname: &String) {
     let mut f = File::open(file).expect("Can't open archive");
     let header = gzip_header::read_gz_header(&mut f).unwrap();
 
@@ -121,9 +141,8 @@ fn sign(file: &String, keyname: &String) {
             break;
         }
     }
-
-    let mut key = SigningKey::from_bytes(&[0; 32]);
-    let signature = key.sign(&file_hasher.finalize());
+    
+    let signature = sign(&file_hasher.finalize());
 
     let mut full_signature: Vec<u8> = "Ed".as_bytes().to_vec();
     // stolen from the test key I'm using for now
