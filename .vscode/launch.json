@@ -6,17 +6,16 @@
     "configurations": [
 
         {
-            "name": "Debug executable 'yksignify'",
+            "name": "Debug executable 'yk-pkg-sign'",
             "type": "lldb",
             "request": "launch",
             "cargo": {
                 "args": [
                     "+nightly",
                     "run",
-                    "--bin=yksignify"
+                    "--bin=yk-pkg-sign"
                 ],
             },
-            //"args": ["dump", "/Users/katie/Downloads/continuwuity-0.5.6.tgz"]
             "args": ["token"]
         }
     ]

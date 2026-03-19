@@ -1,3 +1,3 @@
-# yksignify
+# yk-pkg-sign
 
-Sign OpenBSD packages using a Yubikey
+Sign OpenBSD packages using a YubiKey

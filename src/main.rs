@@ -8,7 +8,7 @@ use cryptoki::{context::{CInitializeArgs, CInitializeFlags}, object::{Attribute}
 use ed25519_dalek::SigningKey;
 use gzip_header::{ExtraFlags, FileSystemType, GzBuilder};
 use sha2::{Digest, Sha512};
-use yksignify::ALL_ATTRS;
+use yk_pkg_sign::ALL_ATTRS;
 
 fn cli() -> Command {
     clap::Command::new("yksignify")
