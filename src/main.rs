@@ -4,7 +4,7 @@ use std::{fs::{File, OpenOptions}, io::{BufReader, Read, Seek, Write}};
 
 use base64::{Engine, prelude::BASE64_STANDARD};
 use clap::{Command, arg};
-use cryptoki::{context::{CInitializeArgs, CInitializeFlags}, object::{Attribute}, session::UserType, types::AuthPin};
+use cryptoki::{context::{CInitializeArgs, CInitializeFlags}, object::{Attribute, ObjectClass}, session::UserType, types::AuthPin};
 use ed25519_dalek::SigningKey;
 use gzip_header::{ExtraFlags, FileSystemType, GzBuilder};
 use sha2::{Digest, Sha512};
@@ -90,11 +90,22 @@ fn show_token() {
     let session = ctx.open_ro_session(slot).expect("Can't start session");
     session.login(UserType::User, Some(&AuthPin::new("".into()))).expect("Login failed");
 
-    println!("Available signing keys:");
+    println!("Available keys:\n");
 
-    for key in session.find_objects(&[Attribute::Sign(true)]).expect("Failed to get keys") {
-        println!("{:#?}", key);
-        for attr in session.get_attributes(key, &ALL_ATTRS).expect("Failed to get key attributes") {
+    for key in session.find_objects(&[Attribute::Class(ObjectClass::PUBLIC_KEY)]).expect("Failed to get keys") {
+        let attrs = session.get_attributes(key, &ALL_ATTRS).expect("Failed to get key attributes");
+
+        let label = 'get: {
+            for attr in &attrs {
+                if let Attribute::Label(l) = attr {
+                    break 'get l;
+                }
+            }
+            panic!("Cannot find label")
+        };
+        println!("Key: {}", label.as_ascii().unwrap().as_str());
+
+        for attr in attrs {
             println!("\t{:?}", attr);
         }
     }
