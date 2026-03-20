@@ -11,4 +11,6 @@ cryptoki = "0.12.0"
 ed25519-dalek = { version = "2.2.0", features = ["pkcs8"] }
 gzip-header = "1.0.0"
 hex = "0.4.3"
+rpassword = "7.4.0"
+secrecy = "0.10.3"
 sha2 = "0.10.9"

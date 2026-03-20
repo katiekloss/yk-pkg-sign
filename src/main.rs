@@ -1,12 +1,12 @@
 #![feature(ascii_char)]
 
-use std::{fs::{File, OpenOptions}, io::{BufReader, Read, Seek, Write}};
+use std::{env, fs::{File, OpenOptions}, io::{BufReader, Read, Seek, Write}};
 
 use base64::{Engine, prelude::BASE64_STANDARD};
 use clap::{Command, arg};
-use cryptoki::{context::{CInitializeArgs, CInitializeFlags}, object::{Attribute}, session::UserType, types::AuthPin};
-use ed25519_dalek::SigningKey;
+use cryptoki::{context::{CInitializeArgs, CInitializeFlags}, object::{Attribute, ObjectClass}, session::UserType, types::AuthPin};
 use gzip_header::{ExtraFlags, FileSystemType, GzBuilder};
+use secrecy::SecretString;
 use sha2::{Digest, Sha512};
 use yk_pkg_sign::{ALL_ATTRS, SigningRequest};
 
@@ -92,7 +92,6 @@ fn show_token() {
     println!("{:?}", info);
     
     let session = ctx.open_ro_session(slot).expect("Can't start session");
-    session.login(UserType::User, Some(&AuthPin::new("".into()))).expect("Login failed");
 
     println!("Available keys:\n");
 
@@ -115,18 +114,24 @@ fn show_token() {
     }
 }
 
-fn sign(data: &[u8]) -> Vec<u8> {
-    let mut key = SigningKey::from_bytes(&[0; 32]);
+fn get_pin() -> SecretString {
+    AuthPin::new(env::var("TOKEN_PIN").or_else(|_| rpassword::prompt_password("Enter HSM PIN: ")).expect("Cannot get PIN").into())
+}
 
+fn sign(data: &[u8]) -> Vec<u8> {
     let ctx = cryptoki::context::Pkcs11::new("/usr/local/lib/libykcs11.dylib").expect("Cannot load PKCS impl");
     ctx.initialize(CInitializeArgs::new(CInitializeFlags::OS_LOCKING_OK)).expect("Cannot initialize PKCS");
     let slots = ctx.get_slots_with_token().expect("Can't get slots");
     if slots.len() == 0 {
         panic!("No slots found");
     }
-    let session = ctx.open_ro_session(slots[0]).expect("Can't create session");
 
-    vec![]
+    let session = ctx.open_ro_session(slots[0]).expect("Can't create session");
+    session.login(UserType::User, Some(&get_pin())).expect("Login failed");
+
+    let key = session.find_objects(&[Attribute::Sign(true)]).expect("Cannot find signing keys")[0];
+
+    session.sign(&cryptoki::mechanism::Mechanism::RsaPkcs, key, data).expect("Signing failed")
 }
 
 fn sign_package(req: SigningRequest /* and more! */) {
