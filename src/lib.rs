@@ -1,5 +1,6 @@
 use clap::{ArgMatches};
 use cryptoki::object::AttributeType;
+use phf::phf_map;
 
 pub const ALL_ATTRS: [AttributeType; 77] = [
     AttributeType::AcIssuer,
@@ -80,6 +81,13 @@ pub const ALL_ATTRS: [AttributeType; 77] = [
     AttributeType::Wrap,
     AttributeType::WrapWithTrusted,
 ];
+
+pub const SLOTS: phf::Map<&str, u8> = phf_map! {
+    "9a" => 1,
+    "9c" => 2,
+    "9d" => 3,
+    "9e" => 4
+};
 
 pub struct SigningRequest {
     pub package_file: String,

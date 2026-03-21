@@ -8,7 +8,7 @@ use cryptoki::{context::{CInitializeArgs, CInitializeFlags}, object::{Attribute,
 use gzip_header::{ExtraFlags, FileSystemType, GzBuilder};
 use secrecy::SecretString;
 use sha2::{Digest, Sha512};
-use yk_pkg_sign::{ALL_ATTRS, SigningRequest};
+use yk_pkg_sign::{ALL_ATTRS, SLOTS, SigningRequest};
 
 fn cli() -> Command {
     clap::Command::new("yk-pkg-sign")
@@ -52,7 +52,7 @@ fn main() {
             sign_package(matches.into())
         },
         Some(("test-sign", _)) => {
-            sign("01234567".as_bytes());
+            sign("01234567".as_bytes(), &SigningRequest { package_file: "test".to_string(), key_name: "test".to_string(), slot: "9C".to_string() });
         }
         _ => unreachable!()
     }
@@ -118,7 +118,7 @@ fn get_pin() -> SecretString {
     AuthPin::new(env::var("TOKEN_PIN").or_else(|_| rpassword::prompt_password("Enter HSM PIN: ")).expect("Cannot get PIN").into())
 }
 
-fn sign(data: &[u8]) -> Vec<u8> {
+fn sign(data: &[u8], req: &SigningRequest) -> Vec<u8> {
     let ctx = cryptoki::context::Pkcs11::new("/usr/local/lib/libykcs11.dylib").expect("Cannot load PKCS impl");
     ctx.initialize(CInitializeArgs::new(CInitializeFlags::OS_LOCKING_OK)).expect("Cannot initialize PKCS");
     let slots = ctx.get_slots_with_token().expect("Can't get slots");
@@ -129,9 +129,15 @@ fn sign(data: &[u8]) -> Vec<u8> {
     let session = ctx.open_ro_session(slots[0]).expect("Can't create session");
     session.login(UserType::User, Some(&get_pin())).expect("Login failed");
 
-    let key = session.find_objects(&[Attribute::Sign(true)]).expect("Cannot find signing keys")[0];
+    let slot = SLOTS.get(&req.slot.to_lowercase()).expect("Unknown slot").clone();
+    let keys = session.find_objects(&[Attribute::Sign(true), Attribute::Id(vec![slot])]).expect("Cannot find signing keys");
+    match keys.len() {
+        0 => panic!("No key in slot {}", &req.slot),
+        2.. => panic!("Too many keys in slot {} (?!)", &req.slot),
+        _ => ()
+    }
 
-    session.sign(&cryptoki::mechanism::Mechanism::RsaPkcs, key, data).expect("Signing failed")
+    session.sign(&cryptoki::mechanism::Mechanism::RsaPkcs, keys[0], data).expect("Signing failed")
 }
 
 fn sign_package(req: SigningRequest /* and more! */) {
@@ -162,7 +168,7 @@ fn sign_package(req: SigningRequest /* and more! */) {
         }
     }
     
-    let signature = sign(&file_hasher.finalize());
+    let signature = sign(&file_hasher.finalize(), &req);
 
     let mut full_signature: Vec<u8> = "Ed".as_bytes().to_vec();
     // stolen from the test key I'm using for now
