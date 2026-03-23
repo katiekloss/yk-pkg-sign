@@ -48,7 +48,7 @@ fn main() {
     let cmd = cli().get_matches();
     match cmd.subcommand() {
         Some(("dump", matches)) => {
-            dump(matches.get_one::<String>("file").unwrap())
+            dump(matches.get_one::<String>("FILE").unwrap())
         },
         Some(("token", _)) => {
             show_token()
