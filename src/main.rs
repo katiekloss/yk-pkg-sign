@@ -4,7 +4,7 @@ use std::{env, fs::{File, OpenOptions}, io::{BufReader, Read, Seek, Write}};
 
 use base64::{Engine, prelude::BASE64_STANDARD};
 use clap::{Command, arg};
-use cryptoki::{context::{CInitializeArgs, CInitializeFlags}, object::{Attribute, ObjectClass}, session::UserType, types::AuthPin};
+use cryptoki::{context::{CInitializeArgs, CInitializeFlags}, object::{Attribute, AttributeType, ObjectClass}, session::{Session, UserType}, types::AuthPin};
 use gzip_header::{ExtraFlags, FileSystemType, GzBuilder};
 use secrecy::SecretString;
 use sha2::{Digest, Sha512};
@@ -37,13 +37,18 @@ fn cli() -> Command {
             Command::new("test-sign")
                 .about("Sign test data using the connected YubiKey")
         )
+        .subcommand(
+            Command::new("export")
+                .about("Export a public key from a slot on the HSM")
+                .arg(arg!(-s --slot <SLOT> "The key slot to export").required(true))
+        )
 }
 
 fn main() {
     let cmd = cli().get_matches();
     match cmd.subcommand() {
         Some(("dump", matches)) => {
-            dump(matches.get_one::<String>("FILE").unwrap())
+            dump(matches.get_one::<String>("file").unwrap())
         },
         Some(("token", _)) => {
             show_token()
@@ -53,6 +58,9 @@ fn main() {
         },
         Some(("test-sign", _)) => {
             sign("01234567".as_bytes(), &SigningRequest { package_file: "test".to_string(), key_name: "test".to_string(), slot: "9C".to_string() });
+        },
+        Some(("export", matches)) => {
+            export(matches.get_one::<String>("slot").unwrap())
         }
         _ => unreachable!()
     }
@@ -78,20 +86,7 @@ fn dump(file: &String) {
 }
 
 fn show_token() {
-    let ctx = cryptoki::context::Pkcs11::new("/usr/local/lib/libykcs11.dylib").expect("Cannot load PKCS impl");
-    ctx.initialize(CInitializeArgs::new(CInitializeFlags::OS_LOCKING_OK)).expect("Cannot initialize PKCS");
-
-    let slots = ctx.get_slots_with_token().expect("Can't get slots");
-    if slots.len() == 0 {
-        panic!("No slots found");
-    }
-
-    let slot = slots[0];
-    println!("{:?}", slot);
-    let info = ctx.get_slot_info(slot).expect("Can't get slot info");
-    println!("{:?}", info);
-    
-    let session = ctx.open_ro_session(slot).expect("Can't start session");
+    let session = connect();
 
     println!("Available keys:\n");
 
@@ -114,19 +109,31 @@ fn show_token() {
     }
 }
 
-fn get_pin() -> SecretString {
-    AuthPin::new(env::var("TOKEN_PIN").or_else(|_| rpassword::prompt_password("Enter HSM PIN: ")).expect("Cannot get PIN").into())
-}
-
-fn sign(data: &[u8], req: &SigningRequest) -> Vec<u8> {
-    let ctx = cryptoki::context::Pkcs11::new("/usr/local/lib/libykcs11.dylib").expect("Cannot load PKCS impl");
+fn connect() -> Session {
+    //let ctx = cryptoki::context::Pkcs11::new("/usr/local/lib/libykcs11.dylib").expect("Cannot load PKCS impl");
+    let ctx = cryptoki::context::Pkcs11::new("/usr/local/lib/softhsm/libsofthsm2.so").unwrap();
     ctx.initialize(CInitializeArgs::new(CInitializeFlags::OS_LOCKING_OK)).expect("Cannot initialize PKCS");
+
     let slots = ctx.get_slots_with_token().expect("Can't get slots");
     if slots.len() == 0 {
         panic!("No slots found");
     }
 
-    let session = ctx.open_ro_session(slots[0]).expect("Can't create session");
+    let slot = slots[0];
+    println!("{:?}", slot);
+
+    let info = ctx.get_slot_info(slot).expect("Can't get slot info");
+    println!("{:?}", info);
+
+    ctx.open_ro_session(slots[0]).expect("Can't create session")
+}
+
+fn get_pin() -> SecretString {
+    AuthPin::new(env::var("TOKEN_PIN").or_else(|_| rpassword::prompt_password("Enter HSM PIN: ")).expect("Cannot get PIN").into())
+}
+
+fn sign(data: &[u8], req: &SigningRequest) -> Vec<u8> {
+    let session = connect();
     session.login(UserType::User, Some(&get_pin())).expect("Login failed");
 
     let slot = SLOTS.get(&req.slot.to_lowercase()).expect("Unknown slot").clone();
@@ -228,4 +235,39 @@ blocksize=65536
             break;
         }
     }
+}
+
+fn export(slot: &String) {
+    let session = connect();
+
+    let slot = SLOTS.get(&slot.to_lowercase()).expect("Unknown slot").clone();
+    let keys = session.find_objects(&[Attribute::Class(ObjectClass::PUBLIC_KEY), Attribute::Id(vec![slot])]).expect("Cannot find key");
+
+    let key = match keys.len() {
+        0 => panic!("No key in slot {}", slot),
+        1 => keys[0],
+        _ => panic!("Too many keys in slot {} (?!)", slot)
+    };
+
+    let attrs = session.get_attributes(key, &[AttributeType::EcPoint]).expect("Can't get key attributes");
+
+    let mut point = 'get: {
+        for attr in &attrs {
+            if let Attribute::EcPoint(m) = attr {
+                break 'get m.clone();
+            }
+        }
+        panic!("Can't get key point");
+    };
+
+    let crc = crc::Crc::<u64>::new(&crc::CRC_64_ECMA_182);
+    let keynum = crc.checksum(&point).to_le_bytes();
+
+    let mut key: Vec<u8> = vec![];
+    key.append(&mut "Ed".as_bytes().to_vec());
+    key.append(&mut keynum.to_vec());
+    key.append(&mut point);
+
+    println!("untrusted comment: yk-pkg-sign public key");
+    println!("{}", BASE64_STANDARD.encode(key));
 }
