@@ -2,9 +2,9 @@
 
 use std::{env, fs::{File, OpenOptions}, io::{BufReader, Read, Seek, Write}};
 
-use base64::{Engine, prelude::BASE64_STANDARD};
+use base64::{Engine, prelude::{BASE64_STANDARD, BASE64_STANDARD_NO_PAD}};
 use clap::{Command, arg};
-use cryptoki::{context::{CInitializeArgs, CInitializeFlags}, object::{Attribute, AttributeType, ObjectClass}, session::{Session, UserType}, types::AuthPin};
+use cryptoki::{context::{CInitializeArgs, CInitializeFlags}, mechanism::{Mechanism, eddsa::{EddsaParams, EddsaSignatureScheme}}, object::{Attribute, AttributeType, ObjectClass}, session::{Session, UserType}, types::AuthPin};
 use gzip_header::{ExtraFlags, FileSystemType, GzBuilder};
 use secrecy::SecretString;
 use sha2::{Digest, Sha512};
@@ -120,10 +120,10 @@ fn connect() -> Session {
     }
 
     let slot = slots[0];
-    println!("{:?}", slot);
+    eprintln!("{:?}", slot);
 
     let info = ctx.get_slot_info(slot).expect("Can't get slot info");
-    println!("{:?}", info);
+    eprintln!("{:?}", info);
 
     ctx.open_ro_session(slots[0]).expect("Can't create session")
 }
