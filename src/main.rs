@@ -137,14 +137,21 @@ fn sign(data: &[u8], req: &SigningRequest) -> Vec<u8> {
     session.login(UserType::User, Some(&get_pin())).expect("Login failed");
 
     let slot = SLOTS.get(&req.slot.to_lowercase()).expect("Unknown slot").clone();
-    let keys = session.find_objects(&[Attribute::Sign(true), Attribute::Id(vec![slot])]).expect("Cannot find signing keys");
+    let keys = session.find_objects(&[Attribute::Sign(true), Attribute::Id(vec![slot])]).expect("Cannot find signing key");
     match keys.len() {
         0 => panic!("No key in slot {}", &req.slot),
         2.. => panic!("Too many keys in slot {} (?!)", &req.slot),
         _ => ()
     }
 
-    session.sign(&cryptoki::mechanism::Mechanism::RsaPkcs, keys[0], data).expect("Signing failed")
+    let signature = session.sign(&Mechanism::Eddsa(EddsaParams::new(EddsaSignatureScheme::Ed25519)), keys[0], data).expect("Signing failed");
+    let (mut keynum, _) = get_public_key(&session, &req.slot);
+
+    let mut full_signature: Vec<u8> = "Ed".as_bytes().to_vec();
+    full_signature.append(&mut keynum);
+    full_signature.append(&mut signature.to_vec());
+
+    full_signature
 }
 
 fn sign_package(req: SigningRequest /* and more! */) {
@@ -177,11 +184,6 @@ fn sign_package(req: SigningRequest /* and more! */) {
     
     let signature = sign(&file_hasher.finalize(), &req);
 
-    let mut full_signature: Vec<u8> = "Ed".as_bytes().to_vec();
-    // stolen from the test key I'm using for now
-    full_signature.append(&mut hex::decode("37a06a7b58d31213").unwrap());
-    full_signature.append(&mut signature.to_vec());
-
     let comment = format!(
 "untrusted comment: verify with {}
 {}
@@ -192,7 +194,7 @@ blocksize=65536
 
 {}",
         req.key_name,
-        BASE64_STANDARD.encode(full_signature),
+        BASE64_STANDARD.encode(signature),
         chrono::Utc::now().to_rfc3339(),
         req.key_name.replace(".pub", ".sec"),
         block_hashes.into_iter().map(|h| hex::encode(h)).collect::<Vec<String>>().join("\n"));
@@ -237,9 +239,8 @@ blocksize=65536
     }
 }
 
-fn export(slot: &String) {
-    let session = connect();
 
+fn get_public_key(session: &Session, slot: &String) -> (Vec<u8>, Vec<u8>) {
     let slot = SLOTS.get(&slot.to_lowercase()).expect("Unknown slot").clone();
     let keys = session.find_objects(&[Attribute::Class(ObjectClass::PUBLIC_KEY), Attribute::Id(vec![slot])]).expect("Cannot find key");
 
