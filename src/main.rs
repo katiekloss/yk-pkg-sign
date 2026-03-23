@@ -252,7 +252,7 @@ fn get_public_key(session: &Session, slot: &String) -> (Vec<u8>, Vec<u8>) {
 
     let attrs = session.get_attributes(key, &[AttributeType::EcPoint]).expect("Can't get key attributes");
 
-    let point = 'get: {
+    let mut point = 'get: {
         for attr in &attrs {
             if let Attribute::EcPoint(m) = attr {
                 break 'get m.clone();
@@ -261,16 +261,11 @@ fn get_public_key(session: &Session, slot: &String) -> (Vec<u8>, Vec<u8>) {
         panic!("Can't get key point");
     };
 
-    // filter out zero bytes from YubiKeys in particular (?!)
-    let point = {
-        let mut i = vec![];
-        for b in point {
-            if b > 0 {
-                i.push(b);
-            }
-        }
-        i
-    };
+    // YubiKeys export 0x04 0x20 at the start of their curve point attribute
+    // I am completely serious
+    if point[0] == 4 && point[1] == 32 {
+        point = point[2..].to_vec();
+    }
 
     let crc = crc::Crc::<u64>::new(&crc::CRC_64_ECMA_182);
     let keynum = crc.checksum(&point).to_le_bytes();
