@@ -11,6 +11,9 @@ use yk_pkg_sign::SigningRequest;
 mod hsm;
 use crate::{hsm::{export, show_token, sign}};
 
+mod signify;
+use crate::{signify::sign_native};
+
 fn cli() -> Command {
     clap::Command::new("yk-pkg-sign")
         .subcommand_required(true)
@@ -114,7 +117,7 @@ fn sign_package(req: SigningRequest) {
         }
     }
     
-    let signature = sign(&file_hasher.finalize(), &req);
+    let signature = sign_native(&file_hasher.finalize());
 
     let comment = format!(
 "untrusted comment: verify with {}
