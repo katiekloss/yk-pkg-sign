@@ -85,8 +85,9 @@ fn dump(file: &String) {
     let signature = BASE64_STANDARD.decode(parts.nth(1).unwrap()).expect("Signature isn't valid base64");
     let keytype = signature[0..2].as_ascii().unwrap().as_str(); // always Ed for EdDSA
     let keynum = &signature[2..10]; // I guess this is like the key fingerprint
-    let real_signature = &signature[10..];
-    println!("{} key {}, signature: {}", keytype, hex::encode(keynum), hex::encode(real_signature));
+    let real_signature = ed25519_dalek::Signature::from_bytes(&signature[10..].try_into().expect("Signature isn't 64 bytes"));
+
+    println!("{} key {}, signature: {:?}", keytype, hex::encode(keynum), real_signature);
 }
 
 fn sign_package(req: SigningRequest) {
