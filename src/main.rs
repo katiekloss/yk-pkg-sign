@@ -5,14 +5,13 @@ use std::{fs::{File, OpenOptions}, io::{BufReader, Read, Seek, Write}};
 use base64::{Engine, prelude::BASE64_STANDARD};
 use clap::{Command, arg};
 use gzip_header::{ExtraFlags, FileSystemType, GzBuilder};
-use sha2::{Digest, Sha512};
+use sha2::Digest;
 use yk_pkg_sign::SigningRequest;
 
 mod hsm;
 use crate::{hsm::{export, show_token, sign}};
 
 mod signify;
-use crate::{signify::sign_native};
 
 fn cli() -> Command {
     clap::Command::new("yk-pkg-sign")
@@ -102,13 +101,10 @@ fn sign_package(req: SigningRequest) {
     f.seek(std::io::SeekFrom::Start(header_size.try_into().unwrap())).expect("Can't seek to end of gzip header");
     let mut reader = BufReader::new(f);
 
-    // maintain a hash of the entire file for the actual signature
-    let mut file_hasher = Sha512::new();
     let mut block_hashes = vec![];
     loop {
         let mut buf = [0; 65536];
         let i = reader.read(&mut buf).expect("Read failed");
-        file_hasher.update(&buf[0..i]);
 
         let block_hash = sha2::Sha512_256::digest(&buf[0..i]).to_vec();
         block_hashes.push(block_hash);
@@ -117,23 +113,33 @@ fn sign_package(req: SigningRequest) {
             break;
         }
     }
-    
-    let signature = sign_native(&file_hasher.finalize());
 
+    // generate the "trusted" part of the comment from some metadata and the block hashes,
+    // then sign that entire thing with the HSM
+    //
+    // The trailing newline is significant
     let comment = format!(
-"untrusted comment: verify with {}
-{}
-date={}
+"date={}
 key={}
 algorithm=SHA512/256
 blocksize=65536
 
-{}",
-        req.key_name,
-        BASE64_STANDARD.encode(signature),
-        chrono::Utc::now().to_rfc3339(),
+{}
+", 
+        chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ"),
         req.key_name.replace(".pub", ".sec"),
         block_hashes.into_iter().map(|h| hex::encode(h)).collect::<Vec<String>>().join("\n"));
+
+    let signature = sign(comment.as_bytes(), &req);
+
+    // and then prepend it with the signature and the "untrusted" part of the comment
+    let comment = format!(
+"untrusted comment: verify with {}
+{}
+{}",
+    req.key_name,
+    BASE64_STANDARD.encode(signature),
+    comment);
 
     // recreate the header from the old one, with the new comment
     let mut new_header = GzBuilder::new()
